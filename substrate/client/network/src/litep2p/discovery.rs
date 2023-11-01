@@ -89,6 +89,11 @@ pub enum DiscoveryEvent {
 		/// Discovered addresses.
 		addresses: Vec<Multiaddr>,
 	},
+
+	/// New external address discovered.
+	ExternalAddressDiscovered {
+		address: Multiaddr,
+	}
 }
 
 pub struct Discovery {
@@ -230,8 +235,14 @@ impl Stream for Discovery {
 
 		match Pin::new(&mut this.identify_event_stream).poll_next(cx) {
 			Poll::Ready(None) => return Poll::Ready(None),
-			Poll::Ready(Some(IdentifyEvent::PeerIdentified { peer, supported_protocols })) =>
-				return Poll::Ready(Some(DiscoveryEvent::Identified { peer, supported_protocols })),
+			Poll::Ready(Some(IdentifyEvent::PeerIdentified {
+				peer,
+				supported_protocols,
+				observed_address: _,
+			})) => {
+				// TODO: store observed addres somewhere and keep track of the confirmations
+				return Poll::Ready(Some(DiscoveryEvent::Identified { peer, supported_protocols }));
+			}
 			_ => {},
 		}
 

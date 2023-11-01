@@ -223,7 +223,10 @@ impl Stream for RequestResponseProtocol {
 									this.protocol,
 									response.len(),
 								);
-								let _ = tx.send(Ok(response));
+								let result = tx.send(Ok(response));
+								// if result.is_err() {
+								// 	log::error!(target: LOG_TARGET, "response send result:
+								// {result:?}"); }
 							},
 						},
 					RequestResponseEvent::RequestFailed { peer, request_id, error } => {

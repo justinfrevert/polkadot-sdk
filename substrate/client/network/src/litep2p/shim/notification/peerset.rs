@@ -18,6 +18,21 @@
 
 //! `Peerset` implementation for `litep2p`.
 
+// how this should work:
+//
+// when a peer is connected and it's added as a reserved peer: decrease slot count for the appropriate type
+// when a peer is connected and it's removed as a reserved peer: disconnect peer?
+//
+// when a peer is not connected and it's added as a reserved peer: connect to node
+//
+// when a substream is opening: if a peer is added as reserved peer, decrease in/out count
+// when a substream is opening: if a peer is removed as a reserve peer, cancel connection
+//
+// when a substream is closng and added as reserved peer: schedule outbound when back-off is over
+//
+//
+//
+
 use crate::{
 	litep2p::peerstore::PeerstoreHandle,
 	service::traits::{Direction, ValidationResult},
@@ -175,6 +190,12 @@ enum PeerState {
 		direction: Direction,
 	},
 
+	// TODO:
+	Canceled {
+		/// Is the peer inbound or outbound.
+		direction: Direction,
+	},
+
 	/// Connection to peer is closing.
 	///
 	/// State implies that the substream was asked to be closed by the local node and litep2p is
@@ -235,6 +256,9 @@ pub struct Peerset {
 	/// Peers.
 	peers: HashMap<PeerId, PeerState>,
 
+	/// Pending cancels.
+	pending_cancels: HashSet<PeerId>,
+
 	/// Pending backoffs for peers who recently disconnected.
 	pending_backoffs: FuturesUnordered<BoxFuture<'static, PeerId>>,
 }
@@ -272,6 +296,7 @@ impl Peerset {
 				reserved_only,
 				peers,
 				pending_backoffs: FuturesUnordered::new(),
+				pending_cancels: HashSet::new(),
 			},
 			cmd_tx,
 		)
@@ -360,8 +385,11 @@ impl Peerset {
 				return ValidationResult::Reject
 			},
 			PeerState::Opening { direction: Direction::Outbound } => {
-				todo!();
+				todo!("handle inbound substream for opening peer {peer:?}");
 			},
+			PeerState::Canceled { direction } => {
+				todo!("handle inbound substream for canceled peer {peer:?}");
+			}
 			state => {
 				log::warn!(target: LOG_TARGET, "{}: invalid state ({state:?}) for inbound substream, peer {peer:?}", self.protocol);
 				debug_assert!(false);
@@ -388,6 +416,7 @@ impl Peerset {
 	pub fn report_substream_open_failure(&mut self, peer: PeerId, error: NotificationError) {
 		log::trace!(target: LOG_TARGET, "{}: failed to open substream to peer {peer:?}: {error:?}", self.protocol);
 
+		// TODO: this is not correct
 		match self.num_out.checked_sub(1) {
 			Some(value) => {
 				self.num_out = value;
@@ -396,6 +425,7 @@ impl Peerset {
 				panic!("tried to substract from zero {peer:?}");
 			},
 		}
+
 		self.peers.insert(peer, PeerState::Backoff);
 		self.peerstore_handle.report_peer(peer, OPEN_FAILURE_ADJUSTMENT);
 		self.pending_backoffs.push(Box::pin(async move {
@@ -430,8 +460,9 @@ impl Stream for Peerset {
 						todo!("queue pending close for the stream and once it opens, close the stream");
 					},
 					Some(state) => {
-						log::debug!(target: LOG_TARGET, "{}: cannot disconnect peer, invalid state: {state:?}", self.protocol);
+						log::warn!(target: LOG_TARGET, "{}: cannot disconnect {peer:?}, invalid state: {state:?}", self.protocol);
 						self.peers.insert(peer, state);
+						debug_assert!(false);
 					},
 					None => {
 						log::error!(target: LOG_TARGET, "{}: peer {peer:?} doens't exist", self.protocol);
@@ -439,20 +470,95 @@ impl Stream for Peerset {
 					},
 				},
 				PeersetCommand::SetReservedPeers { peers } => {
-					// log::debug!(target: LOG_TARGET, "{}: set reserved peers {peers:?}",
-					// self.protocol);
+					log::warn!(target: LOG_TARGET, "{}: set reserved peers {peers:?}", self.protocol);
+
+					// self.reserved_peers = peers;
 				},
 				PeersetCommand::AddReservePeers { peers } => {
-					// log::debug!(target: LOG_TARGET, "{}: add reserved peers {peers:?}",
-					// self.protocol); self.reserved_peers.extend(peers.into_iter());
+					log::debug!(target: LOG_TARGET, "{}: add reserved peers {peers:?}", self.protocol);
+
+					// peers.iter().for_each(|peer| {
+					// 	if !self.reserved_peers.insert(*peer) {
+					// 		log::warn!(
+					// 			target: LOG_TARGET,
+					// 			"{}: {peer} is already a reserved peer",
+					// 			self.protocol,
+					// 		);
+					// 		// return None;
+					// 	}
+					// });
+
+					// return Poll::Ready(Some(PeersetNotificationCommand::OpenSubstream {
+					// 	peers: peers
+					// 		.iter()
+					// 		.filter_map(|peer| {
+					// 			self.reserved_peers.insert(*peer);
+
+					// 			std::matches!(
+					// 				self.peers.get_mut(peer),
+					// 				None | Some(PeerState::Disconnected)
+					// 			)
+					// 			.then(|| {
+					// 				self.peers.insert(
+					// 					*peer,
+					// 					PeerState::Opening { direction: Direction::Outbound },
+					// 				);
+					// 				*peer
+					// 			})
+					// 		})
+					// 		.collect(),
+					// }))
 				},
 				PeersetCommand::RemoveReservedPeers { peers } => {
-					// log::debug!(target: LOG_TARGET, "{}: remove reserved peers {peers:?}",
-					// self.protocol);
+					log::debug!(target: LOG_TARGET, "{}: remove reserved peers {peers:?}", self.protocol);
+
+					// peers.iter().for_each(|peer| {
+					// 	if !self.reserved_peers.remove(peer) {
+					// 		log::warn!(
+					// 			target: LOG_TARGET,
+					// 			"{}: {peer} is not a reserved peer",
+					// 			self.protocol,
+					// 		);
+					// 		// return None;
+					// 	}
+					// });
+
+					// return Poll::Ready(Some(PeersetNotificationCommand::CloseSubstream {
+					// 	peers: peers
+					// 		.iter()
+					// 		.filter_map(|peer| {
+					// 			if !self.reserved_peers.remove(peer) {
+					// 				log::warn!(
+					// 					target: LOG_TARGET,
+					// 					"{}: {peer} is not a reserved peer",
+					// 					self.protocol,
+					// 				);
+					// 				return None;
+					// 			}
+
+					// 			let peer_state = self.peers.get_mut(peer)?;
+
+					// 			match std::mem::replace(peer_state, PeerState::Disconnected) {
+					// 				PeerState::Connected { direction } => {
+					// 					*peer_state = PeerState::Closing { direction };
+					// 					return Some(*peer)
+					// 				},
+					// 				PeerState::Opening { direction } => {
+					// 					*peer_state = PeerState::Canceled { direction };
+					// 					todo!();
+					// 				},
+					// 				state => {
+					// 					*peer_state = state;
+					// 					None
+					// 				},
+					// 			}
+					// 		})
+					// 		.collect(),
+					// }))
 				},
 				PeersetCommand::SetReservedOnly { reserved_only } => {
-					// log::debug!(target: LOG_TARGET, "{}: set reserved only mode to
-					// {reserved_only}", self.protocol);
+					log::debug!(target: LOG_TARGET, "{}: set reserved only mode to {reserved_only}", self.protocol);
+					panic!("set reserved only");
 
 					// self.reserved_only = reserved_only;
 					// if self.reserved_only {}
