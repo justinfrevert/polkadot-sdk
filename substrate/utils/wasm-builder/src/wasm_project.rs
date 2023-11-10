@@ -18,7 +18,7 @@
 use crate::{write_file_if_changed, CargoCommandVersioned, OFFLINE};
 
 use build_helper::rerun_if_changed;
-use cargo_metadata::{CargoOpt, Metadata, MetadataCommand};
+use cargo_metadata::{CargoOpt, DependencyKind, Metadata, MetadataCommand};
 use parity_wasm::elements::{deserialize_buffer, Module};
 use std::{
 	borrow::ToOwned,
@@ -89,8 +89,7 @@ fn crate_metadata(cargo_manifest: &Path) -> Metadata {
 		cargo_manifest.to_path_buf()
 	};
 
-	let mut crate_metadata_command = create_metadata_command(cargo_manifest);
-	crate_metadata_command.features(CargoOpt::AllFeatures);
+	let crate_metadata_command = create_metadata_command(cargo_manifest);
 
 	let crate_metadata = crate_metadata_command
 		.exec()
@@ -876,6 +875,8 @@ impl<'a> Deref for DeduplicatePackage<'a> {
 fn create_metadata_command(path: impl Into<PathBuf>) -> MetadataCommand {
 	let mut metadata_command = MetadataCommand::new();
 	metadata_command.manifest_path(path);
+	metadata_command.features(CargoOpt::NoDefaultFeatures);
+	// metadata_command.features(CargoOpt::SomeFeatures(vec!["runtime-wasm".into()]));
 
 	if offline_build() {
 		metadata_command.other_options(vec!["--offline".to_owned()]);
@@ -915,6 +916,11 @@ fn generate_rerun_if_changed_instructions(
 	packages.insert(DeduplicatePackage::from(package));
 
 	while let Some(dependency) = dependencies.pop() {
+		//
+		if dependency.kind != DependencyKind::Normal {
+			continue;
+		}
+
 		let path_or_git_dep =
 			dependency.source.as_ref().map(|s| s.starts_with("git+")).unwrap_or(true);
 
@@ -967,9 +973,7 @@ fn package_rerun_if_changed(package: &DeduplicatePackage) {
 			p.path() == manifest_path || !p.path().is_dir() || !p.path().join("Cargo.toml").exists()
 		})
 		.filter_map(|p| p.ok().map(|p| p.into_path()))
-		.filter(|p| {
-			p.is_dir() || p.extension().map(|e| e == "rs" || e == "toml").unwrap_or_default()
-		})
+		.filter(|p| p.extension().map(|e| e == "rs" || e == "toml").unwrap_or_default())
 		.for_each(rerun_if_changed);
 }
 
