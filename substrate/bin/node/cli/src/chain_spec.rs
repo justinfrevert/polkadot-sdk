@@ -309,6 +309,7 @@ fn configure_accounts(
 ) {
 	let mut endowed_accounts: Vec<AccountId> = endowed_accounts.unwrap_or_else(|| {
 		vec![
+			get_account_id_from_seed::<sr25519::Public>("//Alice"),
 			get_account_id_from_seed::<sr25519::Public>("Alice"),
 			get_account_id_from_seed::<sr25519::Public>("Bob"),
 			get_account_id_from_seed::<sr25519::Public>("Charlie"),
@@ -440,7 +441,12 @@ pub fn testnet_genesis(
 
 fn development_config_genesis_json() -> serde_json::Value {
 	testnet_genesis(
-		vec![authority_keys_from_seed("Alice")],
+		// vec![authority_keys_from_seed("Alice")],
+		vec![
+			authority_keys_from_seed("Alice"),
+			authority_keys_from_seed("Bob"),
+			authority_keys_from_seed("Charlie")
+			],
 		vec![],
 		get_account_id_from_seed::<sr25519::Public>("Alice"),
 		None,
